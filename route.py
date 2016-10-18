@@ -18,19 +18,24 @@ def main():
         networkdetails = netifaces.ifaddresses(iface)
 
         threading.Thread(target = createInterfaceRawSockets, args = (iface, networkdetails)).start()
-    #     #interface = addrs[netifaces.AF_INET]
-    #     #IP address
-    #     #hostAddress = interface[0]['addr']
-    #
-    #     #routeripaddress = addrs[2][0]['addr']
-    #     #routermacaddress = addrs[17][0]['addr']
-    #
-    #     #Convert ip address from string to int
-    #     #hostAddress = hostAddress.replace(".", "")
-    #     #convertedHostAddress = int(hostAddress)
-    #     print("Creating socket...")
-    #
+
 def createInterfaceRawSockets(iface, networkdetails):
+
+    #SET UP ROUTING TABLES
+    #10.0.0.0/16 - r1-eth0
+    #10.1.0.0/24 - r1-eth1
+    #10.1.1.0/24 - r1-eth2
+    #10.3.0.0/16 10.0.0.2 r1-eth0
+    r_oneTable_ip = ["10.0.0.0/16", "10.1.0.0/24", "10.1.1.0/24", "10.3.0.0/16", "10.0.0.2"]
+    r_oneTable_name = ["r1-eth0", "r1-eth1", "r1-eth2", "r1-eth0"]
+
+    #10.0.0.0/16 - r2-eth0
+    #10.3.0.0/24 - r2-eth1
+    #10.3.1.0/24 - r2-eth2
+    #10.3.4.0/24 - r2-eth3
+    #10.1.0.0/16 10.0.0.1 r2-eth0
+    r_twoTable_ip = ["10.0.0.0/16", "10.3.0.0/24", "10.3.1.0/24", "10.3.4.0/24", "10.1.0.0/16", "10.0.0.1"]
+    r_twoTable_name = ["r2-eth0", "r2-eth1", "r2-eth2", "r2-eth3", "r2-eth0"]
     try:
         #Create a raw socket or something like that
         packet_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
@@ -67,7 +72,6 @@ def createInterfaceRawSockets(iface, networkdetails):
             ip_header = struct.unpack("9s1s2s4s4s", ip_header_raw)
 
             icmp_header_raw = packet[0][34:98]
-            icmp_full = struct.unpack("64s", icmp_header_raw)
             icmp_header = struct.unpack("1s1s2s60s", icmp_header_raw)
 
 
@@ -77,11 +81,6 @@ def createInterfaceRawSockets(iface, networkdetails):
             print "Type:               ", binascii.hexlify(ethernet_header[2])
 
             print "________________IPv4 HEADER___________________"
-            # print "Version/IHL:        ", binascii.hexlify(ip_header[0])
-            # print "DSCP/ECN:           ", binascii.hexlify(ip_header[1])
-            #print "Total Length:       ", binascii.hexlify(ip_header[2])
-            # print "Identification      ", binascii.hexlify(ip_header[3])
-            # print "Flags/FragOffset    ", binascii.hexlify(ip_header[4])
             print "IP Protocol:        ", binascii.hexlify(ip_header[1])
             print "Header Checksum:    ", binascii.hexlify(ip_header[2])
             print "Source IP:          ", socket.inet_ntoa(ip_header[3])
@@ -96,7 +95,6 @@ def createInterfaceRawSockets(iface, networkdetails):
                 print "Checksum:       ", binascii.hexlify(icmp_header[2])
 
                 #CONSTRUCT PACKET FOR ICMP REPLY
-                print binascii.hexlify(icmp_full[0])
 
                 #Destination address, source address, type
                 eth_hdr = struct.pack("!6s6s2s", binascii.hexlify(ethernet_header[1]).decode('hex'), routermacaddress.replace(':','').decode('hex'), headerType.decode('hex'))
@@ -119,7 +117,6 @@ def createInterfaceRawSockets(iface, networkdetails):
         #Check for ARP Request
         if headerType =='0806':
             arp_header_raw = packet[0][14:42]
-            arp_full = struct.unpack("28s", arp_header_raw)
             arp_header = struct.unpack("8s6s4s6s4s", arp_header_raw)
             #send arp request
             print "_______________ETHERNET HEADER________________"
