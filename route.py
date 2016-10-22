@@ -1,6 +1,25 @@
 import netifaces, socket, struct, binascii, threading
 
-def main():
+def initiateSockets():
+    global packet_sockets
+    global r1_routingTable
+    global r2_routingTable
+    packet_sockets = {}
+
+    #SET UP ROUTING TABLES
+    r1_routingTable = {"10.0.0.0/16":"r1-eth0",
+                       "10.1.0.0/24":"r1-eth1",
+                       "10.1.1.0/24":"r1-eth2",
+                       "10.3.0.0/24":"r1-eth0",
+                       "10.0.0.2":"r1-eth0"}
+
+    r2_routingTable = {"10.0.0.0/16":"r2-eth0",
+                       "10.3.0.0/24":"r2-eth1",
+                       "10.3.1.0/24":"r2-eth2",
+                       "10.3.4.0/24":"r2-eth3",
+                       "10.1.0.0/16":"r2-eth0",
+                       "10.0.0.1":"r2-eth0"}
+
     #get list of interfaces
     ifaces = netifaces.interfaces()
 
@@ -11,59 +30,53 @@ def main():
     # #about those for the purpose of enumerating interfaces. We can
     # #use the AF_INET addresses in this list for example to get a list
     # #of our own IP addresses
-        print "INTERFACE NAME: :", iface
-        networkdetails = netifaces.ifaddresses(iface)
+        try:
+            #Create a raw socket
+            packet_sockets[iface] = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
 
-        threading.Thread(target = createInterfaceRawSockets, args = (iface, networkdetails)).start()
-
-
-
-def createInterfaceRawSockets(iface, networkdetails):
-    global intermitentIP
-    global intermitentMAC
-    global initalICMPrequest
-
-    #SET UP ROUTING TABLES
-    #10.0.0.0/16 - r1-eth0
-    #10.1.0.0/24 - r1-eth1
-    #10.1.1.0/24 - r1-eth2
-    #10.3.0.0/16 10.0.0.2 r1-eth0
-    r_oneTable_ip = {"10.0.0.0": "r1-eth0", "10.1.0.0":"r1-eth1", "10.1.1.0":"r1-eth2", "10.3.0.0":"r1-eth0", "10.0.0.2":"r1-eth0"}
+            #Bind socket to interface address
+            packet_sockets[iface].bind((iface, 0))
 
 
-    #10.0.0.0/16 - r2-eth0
-    #10.3.0.0/24 - r2-eth1
-    #10.3.1.0/24 - r2-eth2
-    #10.3.4.0/24 - r2-eth3
-    #10.1.0.0/16 10.0.0.1 r2-eth0
-    r_twoTable_ip = {"10.0.0.0":"r2-eth0", "10.3.0.0":"r2-eth1", "10.3.1.0":"r2-eth2", "10.3.4.0":"r2-eth3", "10.1.0.0":"r2-eth0", "10.0.0.1":"r2-eth0"}
+            print "INTERFACE NAME: :", iface
+            print packet_sockets[iface]
+
+            #get addresses for each interface and print address for testing
+            addresses = netifaces.ifaddresses(iface)
+            routerip = addresses[2][0]['addr']
+            routermac =  addresses[17][0]['addr']
+            print routerip
+            print routermac
+
+            #create thread for each interface
+            threading.Thread(target = createInterfaceRawSockets,
+                             args = (iface, packet_sockets[iface])).start()
+
+        except socket:
+            print("Something went wrong creating socket")
 
 
 
-    try:
-        #Create a raw socket or something like that
-        packet_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
 
-        #Bind socket to interface address
-        packet_socket.bind((iface, 0))
-
-    except socket:
-        print("Something went wrong creating socket")
+def createInterfaceRawSockets(interface, packet_socket):
 
 
+    networkdetails = netifaces.ifaddresses(interface)
+    routeripaddress = networkdetails[2][0]['addr']
+    routermacaddress =  networkdetails[17][0]['addr']
+
+    print interface + routeripaddress + routermacaddress
 
 
     #loop and recieve packets. We are only looking at one interface,
     #for the project you will probably want to look at more (to do so,
     #a good way is to have one socket per interface and use select to
     #see which ones have data)
-    routeripaddress = networkdetails[2][0]['addr']
-    routermacaddress =  networkdetails[17][0]['addr']
 
     print "Ready to recieve..."
     while 1:
-
         packet = packet_socket.recvfrom(2048)
+
 
         #Get ethernet frame
         ethernet_header_raw = packet[0][0:14]
@@ -71,6 +84,10 @@ def createInterfaceRawSockets(iface, networkdetails):
 
         headerType = binascii.hexlify(ethernet_header[2])
 
+        print "+++++++++++++++++++++++++++++"
+        print routeripaddress
+        print routermacaddress
+        print "+++++++++++++++++++++++++++++"
         #Check for IPv4 request
         if headerType == '0800':
             ip_header_raw = packet[0][14:34]
@@ -102,22 +119,30 @@ def createInterfaceRawSockets(iface, networkdetails):
                 #CONSTRUCT PACKET FOR ICMP REPLY
 
                 #Destination address, source address, type
-                eth_hdr = struct.pack("!6s6s2s", binascii.hexlify(ethernet_header[1]).decode('hex'), routermacaddress.replace(':','').decode('hex'), headerType.decode('hex'))
+                eth_hdr = struct.pack("!6s6s2s",
+                                        binascii.hexlify(ethernet_header[1]).decode('hex'),
+                                        routermacaddress.replace(':','').decode('hex'),
+                                        headerType.decode('hex'))
                 #Version/IHL, DSCP/ECN, Total Length, Identification, Flags/FragOffset, IP Protocol, HeaderChecksum,
-                ipv_hdr = struct.pack("!9s1s2s", binascii.hexlify(ip_header[0]).decode('hex'), '\x01', binascii.hexlify(ip_header[2]).decode('hex'))
+                ipv_hdr = struct.pack("!9s1s2s",
+                                        binascii.hexlify(ip_header[0]).decode('hex'),
+                                        '\x01',
+                                        binascii.hexlify(ip_header[2]).decode('hex'))
                 #Source IP
                 ipv_source = struct.pack("!4s",  socket.inet_aton(routeripaddress))
                 #Desination IP
                 ipv_target = struct.pack("!4s", socket.inet_aton(socket.inet_ntoa(ip_header[3])))
                 #ICMP TYPE, CODE, CHECKSUM, REMAINING
-                icmp_hdr = struct.pack("1s1s2s60s", '\x00', '\x00', binascii.hexlify(icmp_header[2]).decode('hex'), binascii.hexlify(icmp_header[3]).decode('hex'))
+                icmp_hdr = struct.pack("1s1s2s60s",
+                                        '\x00', '\x00',
+                                        binascii.hexlify(icmp_header[2]).decode('hex'),
+                                        binascii.hexlify(icmp_header[3]).decode('hex'))
 
                 #Construct packet
                 packet = eth_hdr + ipv_hdr + ipv_source + ipv_target + icmp_hdr
 
                 #Send reply
                 packet_socket.send(packet)
-
 
         #Check for ARP Request
         if headerType =='0806':
@@ -135,87 +160,34 @@ def createInterfaceRawSockets(iface, networkdetails):
             print "Dest IP:           ", socket.inet_ntoa(arp_header[5])
             print "______________________________________________"
 
-            dMAC = binascii.hexlify(ethernet_header[0])
-            sMAC = binascii.hexlify(ethernet_header[1])
-            t = binascii.hexlify(ethernet_header[2])
-            arp_dat = binascii.hexlify(arp_header[0])
-            arp_op = binascii.hexlify(arp_header[1])
-            arp_sMAC = binascii.hexlify(arp_header[2])
-            arp_sIP = socket.inet_ntoa(arp_header[3])
-            arp_dMAC = binascii.hexlify(arp_header[4])
-            arp_dIP = socket.inet_ntoa(arp_header[5])
 
-            packetdata = dMAC+sMAC+t+arp_dat+arp_op+arp_sMAC+arp_sIP+arp_dMAC+arp_dIP
+            #CONSTRUCT PACKET AND REPLY TO REQUEST
 
-            print packetdata
+            print routermacaddress
+            print routermacaddress.replace(':','').decode('hex')
 
-            #check if target IP is not current interface's IP and if we have not already
-            #found the target IP's MAC address, then send an ARP request to destinations IP
-            #to receive the target destinations MAC Address
-            if arp_dIP != routeripaddress and arp_dMAC == '000000000000':
-                target_interface = r_oneTable_ip[arp_dIP]
-                if target_interface == "":
-                    target_interface = r_twoTable_ip[arp_dIP]
+            #Destination address, source address, type
+            eth_hdr = struct.pack("!6s6s2s",
+                                    binascii.hexlify(ethernet_header[1]).decode('hex'),
+                                    routermacaddress.replace(':','').decode('hex'),
+                                    headerType.decode('hex'))
+            #Hardware type, protocol type, hardware size, protocol size, OP CODE
+            arp_hdr = struct.pack("!6s2s",
+                                    binascii.hexlify(arp_header[0]).decode('hex'),
+                                    '\x00\x02')
+            #Source MAC address, Source IP address
+            arp_source = struct.pack("!6s4s",
+                                    routermacaddress.replace(':','').decode('hex'),
+                                    socket.inet_aton(routeripaddress))
+            #Destination MAC address, Destination IP address
+            arp_target = struct.pack("!6s4s",
+                                    binascii.hexlify(ethernet_header[2]).decode('hex'),
+                                    socket.inet_aton(socket.inet_ntoa(arp_header[3])))
 
-                temp_networkdetails = netifaces.getifaddrs(target_interface)
-
-                tempIP = tempnetwork[2][0]['addr']
-                tempMAC =  tempnetwork[17][0]['addr']
-                #Construct and send arp request to hostAddress
-                #Destination address, source address, type
-                eth_hdr = struct.pack("!6s6s2s", '\xff\xff\xff\xff\xff\xff', tempMAC.replace(':','').decode('hex'), headerType.decode('hex'))
-                #Hardware type, protocol type, hardware size, protocol size, OP CODE
-                arp_hdr = struct.pack("!8s", '\x00\x01\x08\x00\x06\x04\x00\x01')
-                #Source MAC address, Source IP address
-                arp_source = struct.pack("!6s4s", tempMAC.replace(':','').decode('hex'), socket.inet_aton(tempIP))
-                #Destination MAC address, Destination IP address
-                arp_target = struct.pack("!6s4s", '\x00\x00\x00\x00\x00\x00', socket.inet_aton(arp_dIP))
-
-                #Construct packet
-                packet = eth_hdr + arp_hdr + arp_source + arp_target
-
-                #Send Reply
-                packet_socket.send(packet)
-
-
-            #Check ARP OPCODE for reply/request byte
-
-            if arp_dIP != routeripaddress and intermitentMAC == None:
-                intermitentMAC = binascii.hexlify(ethernet_header[1])
-
-                #CONSTRUCT PACKET FOR ICMP PING
-
-                #Destination address, source address, type
-                eth_hdr = struct.pack("!6s6s2s", binascii.hexlify(ethernet_header[1]).decode('hex'), routermacaddress.replace(':','').decode('hex'), headerType.decode('hex'))
-                #Hardware type, protocol type, hardware size, protocol size, OP CODE
-                arp_hdr = struct.pack("!6s2s", binascii.hexlify(arp_header[0]).decode('hex'), '\x00\x02')
-                #Source MAC address, Source IP address
-                arp_source = struct.pack("!6s4s", routermacaddress.replace(':','').decode('hex'), socket.inet_aton(routeripaddress))
-                #Destination MAC address, Destination IP address
-                arp_target = struct.pack("!6s4s", binascii.hexlify(ethernet_header[2]).decode('hex'), socket.inet_aton(socket.inet_ntoa(arp_header[3])))
-
-                #Construct packet
-                packet = eth_hdr + ipv_hdr + ipv_source + ipv_target + icmp_hdr
-
-                packet_socket.send(packet)
-
-            else:
-                #CONSTRUCT PACKET AND REPLY TO REQUEST
-
-
-                #Destination address, source address, type
-                eth_hdr = struct.pack("!6s6s2s", binascii.hexlify(ethernet_header[1]).decode('hex'), routermacaddress.replace(':','').decode('hex'), headerType.decode('hex'))
-                #Hardware type, protocol type, hardware size, protocol size, OP CODE
-                arp_hdr = struct.pack("!6s2s", binascii.hexlify(arp_header[0]).decode('hex'), '\x00\x02')
-                #Source MAC address, Source IP address
-                arp_source = struct.pack("!6s4s", routermacaddress.replace(':','').decode('hex'), socket.inet_aton(routeripaddress))
-                #Destination MAC address, Destination IP address
-                arp_target = struct.pack("!6s4s", binascii.hexlify(ethernet_header[2]).decode('hex'), socket.inet_aton(socket.inet_ntoa(arp_header[3])))
-
-                #Construct packet
+            #Construct packet
             packet = eth_hdr + arp_hdr + arp_source + arp_target
 
-                #Send Reply
+            #Send Reply
             packet_socket.send(packet)
 
-main()
+initiateSockets()
