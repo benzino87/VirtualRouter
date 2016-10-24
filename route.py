@@ -77,7 +77,7 @@ def constructAndSendInitialICMP_packet(packet_socket, destination_mac, destinati
 
     packet_socket.send(packet)
 
-
+#ICMP error messages send eth, ip, icmp, ip(again), first 8 bytes.
 
 
 # Sends a default ARP request to host to find MAC address so IPV4 request can be passsed along
