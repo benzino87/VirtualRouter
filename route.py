@@ -1,10 +1,25 @@
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+' Author: Jason Bensel
+' CIS: 457, Project 2
+' 24 OCT 2016
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
 import netifaces, socket, struct, binascii, threading
 
-
+#Iterates through the list of interfaces, creates a socket attached to each
+#interface and adds them to the globally accessable packet_sockets dictionary
 def initiateSockets():
+
+    #List of packet sockets specific to interface
     global packet_sockets
+
+    #Routing table one
     global r1_routingTable
+
+    #Routing table two
     global r2_routingTable
+
+
     packet_sockets = {}
 
     #SET UP ROUTING TABLES
@@ -26,12 +41,8 @@ def initiateSockets():
 
     #iterate through list of interfaces and attach sockets
     for iface in ifaces:
-    # #Check if this is a packet address, there will be one per
-    # #interface.  There are IPv4 and IPv6 as well, but we don't care
-    # #about those for the purpose of enumerating interfaces. We can
-    # #use the AF_INET addresses in this list for example to get a list
-    # #of our own IP addresses
         try:
+
             #Create a raw socket
             packet_sockets[iface] = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(3))
 
@@ -56,6 +67,9 @@ def initiateSockets():
         except socket:
             print("Something went wrong creating socket")
 
+
+#Attaches an ethernet header to an Ipv4 packet that does not have destination
+#MAC addres
 def constructAndSendInitialICMP_packet(packet_socket, destination_mac, destination_ip, source_mac):
     #Destination address, source address, type
     eth_hdr = struct.pack("!6s6s2s",
@@ -70,6 +84,7 @@ def constructAndSendInitialICMP_packet(packet_socket, destination_mac, destinati
 
 # Sends a default ARP request to host to find MAC address so IPV4 request can be passsed along
 def constructAndSendDefaultARP_packet(interface, ip_address, mac_address, destination_ip):
+
     #construct default ARP request to send on required interface
     eth_hdr = struct.pack("!6s6s2s",
                             '\xff\xff\xff\xff\xff\xff',
@@ -92,24 +107,19 @@ def constructAndSendDefaultARP_packet(interface, ip_address, mac_address, destin
 
     packet_sockets[interface].send(packet)
 
+#Handles all of the interactions on each interface. Checks for valid IPV4 and
+#ARP requests.
 def createInterfaceRawSockets(interface, packet_socket):
-
 
     networkdetails = netifaces.ifaddresses(interface)
     routeripaddress = networkdetails[2][0]['addr']
     routermacaddress =  networkdetails[17][0]['addr']
-
+    #print data for testing
     print interface + routeripaddress + routermacaddress
-
-    #loop and recieve packets. We are only looking at one interface,
-    #for the project you will probably want to look at more (to do so,
-    #a good way is to have one socket per interface and use select to
-    #see which ones have data)
 
     print "Ready to recieve..."
     while 1:
         packet = packet_socket.recvfrom(2048)
-
 
         #Get ethernet frame
         ethernet_header_raw = packet[0][0:14]
@@ -126,7 +136,7 @@ def createInterfaceRawSockets(interface, packet_socket):
             icmp_header_raw = packet[0][34:98]
             icmp_header = struct.unpack("1s1s2s60s", icmp_header_raw)
 
-
+            #Printed for testing
             print "_______________ETHERNET HEADER________________"
             print "Destination MAC:    ", binascii.hexlify(ethernet_header[0])
             print "Source MAC:         ", binascii.hexlify(ethernet_header[1])
