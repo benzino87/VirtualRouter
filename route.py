@@ -1,14 +1,10 @@
 import netifaces, socket, struct, binascii, threading
 
+
 def initiateSockets():
     global packet_sockets
     global r1_routingTable
     global r2_routingTable
-    global dest_MAC_address
-    global eth_icmp_header
-    global ipv4_header
-    global ipv4_icmp_header
-    global icmp_source_ip
     packet_sockets = {}
 
     #SET UP ROUTING TABLES
@@ -59,25 +55,17 @@ def initiateSockets():
 
         except socket:
             print("Something went wrong creating socket")
-            
+
 def constructAndSendInitialICMP_packet(packet_socket, destination_mac, destination_ip, source_mac):
     #Destination address, source address, type
     eth_hdr = struct.pack("!6s6s2s",
                         destination_mac.decode('hex'),
                         source_mac.replace(':','').decode('hex'),
-                        headerType.decode('hex'))
+                        '\x08\x00')
 
-    #Source IP
-    ipv_source = struct.pack("!4s",  socket.inet_aton(icmp_source_ip))
-    #Desination IP
-    ipv_target = struct.pack("!4s", socket.inet_aton(destination_ip))
-
-    #re-construct packet
-    packet = eth_hdr + ipv4_header + ipv_source + ipv_target + ipv4_icmp_header
+    packet = eth_hdr + icmp_partial_packet
 
     packet_socket.send(packet)
-
-
 
 
 # Sends a default ARP request to host to find MAC address so IPV4 request can be passsed along
@@ -112,7 +100,6 @@ def createInterfaceRawSockets(interface, packet_socket):
     routermacaddress =  networkdetails[17][0]['addr']
 
     print interface + routeripaddress + routermacaddress
-
 
     #loop and recieve packets. We are only looking at one interface,
     #for the project you will probably want to look at more (to do so,
@@ -165,7 +152,9 @@ def createInterfaceRawSockets(interface, packet_socket):
                 is_interfaceFound = False
                 required_interface = ""
 
-                #Look up routing table to find required interface
+                # If the destinaition IP does is not this router's IP address, do a
+                # routing table look up to find required intereface. Save the current packet
+                # until the destinations MAC address is found.
                 if destination_ip != routeripaddress:
                     for dest in r1_routingTable:
                         if dest[0:6] == destination_ip[0:6]:
@@ -177,6 +166,25 @@ def createInterfaceRawSockets(interface, packet_socket):
                                 required_interface = r2_routingTable[dest]
                                 is_interfaceFound = True
 
+                    ipv4_header = struct.pack("!9s1s2s",
+                                        binascii.hexlify(ip_header[0]).decode('hex'),
+                                        '\x01',
+                                        binascii.hexlify(ip_header[2]).decode('hex'))
+                    #Source IP
+                    ipv_source = struct.pack("!4s",  socket.inet_aton(icmp_source_ip))
+                    #Desination IP
+                    ipv_target = struct.pack("!4s", socket.inet_aton(destination_ip))
+
+                    #ICMP TYPE, CODE, CHECKSUM, REMAINING
+                    ipv4_icmp_header = struct.pack("1s1s2s60s",
+                                        binascii.hexlify(icmp_header[0]).decode('hex'),
+                                        binascii.hexlify(icmp_header[1]).decode('hex'),
+                                        binascii.hexlify(icmp_header[2]).decode('hex'),
+                                        binascii.hexlify(icmp_header[3]).decode('hex'))
+
+                    global icmp_partial_packet
+                    icmp_partial_packet = ipv4_header + ipv_source + ipv_target + ipv4_icmp_header
+
                     alt_network_details = netifaces.ifaddresses(interface)
                     alt_routeripaddress = alt_network_details[2][0]['addr']
                     alt_routermacaddress =  alt_network_details[17][0]['addr']
@@ -186,16 +194,7 @@ def createInterfaceRawSockets(interface, packet_socket):
                                                         alt_routermacaddress,
                                                         destination_ip)
 
-                    ipv4_header = struct.pack("!9s1s2s",
-                                        binascii.hexlify(ip_header[0]).decode('hex'),
-                                        '\x01',
-                                        binascii.hexlify(ip_header[2]).decode('hex'))
 
-                    #ICMP TYPE, CODE, CHECKSUM, REMAINING
-                    ipv4_icmp_header = struct.pack("1s1s2s60s",
-                                        '\x00', '\x00',
-                                        binascii.hexlify(icmp_header[2]).decode('hex'),
-                                        binascii.hexlify(icmp_header[3]).decode('hex'))
 
                 else:
                     #Destination address, source address, type
@@ -242,15 +241,14 @@ def createInterfaceRawSockets(interface, packet_socket):
 
             # check for ARP REPLY if ARP reply send the initial ICMP request
             is_reply = binascii.hexlify(arp_header[1])
-            if is_reply == 2:
+            print "REPLY: " + is_reply
+            if is_reply == "0002":
                 destination_mac = binascii.hexlify(ethernet_header[1])
                 destination_ip = socket.inet_ntoa(arp_header[3])
-
                 constructAndSendInitialICMP_packet(packet_socket,
                                                     destination_mac,
                                                     destination_ip,
                                                     routermacaddress)
-
 
 
             #CONSTRUCT PACKET AND REPLY TO REQUEST
